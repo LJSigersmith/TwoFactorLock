@@ -7,7 +7,6 @@
 #include "display.cpp"
 #include "logging.cpp"
 
-#define LOG_FILENAME "unlock_log.txt"
 #define CODE_FILENAME "lock_config.txt"
 #define SD_CARD_PIN D2
 SdFat g_sd;
@@ -37,8 +36,6 @@ std::map<int, std::string> keywordMap = {
 int keyword_int = 0;
 int unlock_code = 0;
 
-FsFile log_file;
-
 using namespace std;
 
 void read_code() {
@@ -50,10 +47,9 @@ void setup() {
 
   // Init SD
   if (!g_sd.begin(SD_CARD_PIN)) { Serial.println("SD initialization failed!"); }
-  
-  // Clear and recreate logfile
-  g_sd.remove(LOG_FILENAME);
-  log_file = g_sd.open(LOG_FILENAME, O_WRONLY | O_CREAT | O_APPEND);
+
+  // Init logging
+  logging_init(g_sd);
 
   // Init microphone
 
