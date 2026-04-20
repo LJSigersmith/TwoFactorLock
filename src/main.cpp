@@ -1,23 +1,16 @@
 #include <Arduino.h>
 #include <map>
+#include <string>
 
-void setup() {
+#include <SdFat.h>
 
-  // Init SD
+#include "display.cpp"
+#include "logging.cpp"
 
-  // Init microphone
-
-  // Init IR stuff
-
-  // Init display
-
-  // Write code to lock_config.txt
-
-  // Clear and recreate log file unlock_log.txt
-
-}
-
-std::string log_file = "unlock_log.txt";
+#define LOG_FILENAME "unlock_log.txt"
+#define CODE_FILENAME "lock_config.txt"
+#define SD_CARD_PIN D2
+SdFat g_sd;
 
 enum PROGRAM_STAGE {
   START,
@@ -31,9 +24,6 @@ enum PROGRAM_STAGE {
   UNLOCKED
 };
 PROGRAM_STAGE current_stage = START;
-int unlock_code = 0;
-
-int keyword_int = 0;
 std::map<int, std::string> keywordMap = {
   {1, "blue"},
   {2, "cyan"},
@@ -44,22 +34,42 @@ std::map<int, std::string> keywordMap = {
   {7, "yellow"}
 };
 
+int keyword_int = 0;
+int unlock_code = 0;
+
+FsFile log_file;
+
 using namespace std;
-/**
- * @brief Log event to logfile in format: YY:MM:DD:HH:MM:SS,STAGE,RESULT,DETAIL
- * 
- * @param stage Stage enum indicating what stage we're in (i.e. KEYWORD_CORRECT)
- * @param result The result of the stage
- * @param detail Any details on the event
- */
-void log_event_to_file(PROGRAM_STAGE stage, string result, string detail) {
+
+void read_code() {
+  FsFile code_file = g_sd.open(CODE_FILENAME, O_WRONLY | O_CREAT | O_APPEND);
+  // TODO: Read code in to unlock_code
+}
+
+void setup() {
+
+  // Init SD
+  if (!g_sd.begin(SD_CARD_PIN)) { Serial.println("SD initialization failed!"); }
+  
+  // Clear and recreate logfile
+  g_sd.remove(LOG_FILENAME);
+  log_file = g_sd.open(LOG_FILENAME, O_WRONLY | O_CREAT | O_APPEND);
+
+  // Init microphone
+
+  // Init IR stuff
+
+  // Init display
+  display_init();
+
+  // Read code from lock_config.txt
+  read_code();
 
 }
 
 void start() {
-  // Read code from SD card (4 digits) (lock_config.txt) -> unlock_code
-  
   // Display LOCK
+  display_lock_screen();
   
   current_stage = WAITING_FOR_CODE;
 }
@@ -125,10 +135,10 @@ void unlocked() {
 
 /*
 
-Need to log every event: YY:MM:DD:HH:MM:SS,STAGE,RESULT,DETAIL
-Log to unlock_log.txt
-Display needs to be updated at every stage
-Buzzer for successful/unsuccessful attempts
+  Need to log every event: YY:MM:DD:HH:MM:SS,STAGE,RESULT,DETAIL
+  Log to unlock_log.txt
+  Display needs to be updated at every stage
+  Buzzer for successful/unsuccessful attempts
 
 */
 void loop() {
