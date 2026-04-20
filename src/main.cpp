@@ -99,7 +99,7 @@ void keyword_correct() {
 }
 
 void unlocked() {
-  // 
+  // Show unlocked?
 }
 
 /*
@@ -135,6 +135,8 @@ void loop() {
     case KEYWORD_INCORRECT :
       keyword_incorrect();
       break;
+    case UNLOCKED :
+      unlocked();
     default :
       break;
   }
