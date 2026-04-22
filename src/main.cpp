@@ -4,8 +4,8 @@
 
 #include <SdFat.h>
 
-#include "display.cpp"
-#include "logging.cpp"
+#include "display.h"
+#include "logging.h"
 
 #define CODE_FILENAME "lock_config.txt"
 #define SD_CARD_PIN D2
@@ -41,6 +41,7 @@ int unlock_code = 0;
 /* –– Forward Declarations ––––––––––––––––––––––––––––––––––––––––––––––––––––– */
 void start();
 void waiting_for_code();
+void read_code();
 void check_code();
 void code_incorrect();
 void code_correct();
@@ -48,7 +49,6 @@ void waiting_for_keyword();
 void keyword_correct();
 void keyword_incorrect();
 void unlocked();
-
 
 using namespace std;
 
