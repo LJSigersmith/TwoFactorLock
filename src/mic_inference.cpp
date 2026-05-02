@@ -110,10 +110,10 @@ void mic_inference_reset() {
 }
 
 bool mic_inference_run(String &out_label) {
-    Serial.println("DBG: waiting for slice...");
+    //Serial.println("DBG: waiting for slice...");
     while (s_inference.buf_ready == 0) delay(1);
     s_inference.buf_ready = 0;
-    Serial.println("DBG: slice ready");
+    //Serial.println("DBG: slice ready");
 
     signal_t signal;
     signal.total_length = EI_CLASSIFIER_SLICE_SIZE;
@@ -127,7 +127,7 @@ bool mic_inference_run(String &out_label) {
     }
 
     if (++s_slice_count < EI_CLASSIFIER_SLICES_PER_MODEL_WINDOW) {
-        Serial.println("DBG: slice " + String(s_slice_count) + "/" + String(EI_CLASSIFIER_SLICES_PER_MODEL_WINDOW));
+        //Serial.println("DBG: slice " + String(s_slice_count) + "/" + String(EI_CLASSIFIER_SLICES_PER_MODEL_WINDOW));
         return false;
     }
     s_slice_count = 0;
