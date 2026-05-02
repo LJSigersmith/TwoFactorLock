@@ -8,10 +8,11 @@
 
 #include "display.h"
 #include "logging.h"
+#include "mic_inference.h"
 
 #define CODE_FILENAME "lock_config.txt"
 #define SD_CARD_PIN D2
-const byte IR_RECEIVE_PIN = A0;
+#define IR_RECEIVE_PIN A0
 SdFat g_sd;
 bool g_sd_available = false;
 
@@ -39,7 +40,7 @@ std::map<int, std::string> g_keyword_map = {
   {6, "white"},
   {7, "yellow"}
 };
-const std::map<uint8_t, int> remoteDigits = 
+const std::map<uint8_t, int> g_remote_digits =
     {{0x16, 0},
     {0x0C, 1},
     {0x18, 2},
@@ -50,8 +51,14 @@ const std::map<uint8_t, int> remoteDigits =
     {0x42, 7},
     {0x52, 8},
     {0x4A, 9}};
-int keyword_int = 0;
-int unlock_code = 0;
+int g_keyword_int = 0;
+int g_unlock_code = 0;
+
+int g_password_digits[4] = {-1, -1, -1, -1}; // Array to hold the 4 digits of the password
+int g_current_digit_index = 0;                // Index to track which digit is being entered
+bool g_capturing_password = false;
+int g_expected_color_digit = -1;
+bool g_is_app_locked = true;
 
 /* –– Forward Declarations ––––––––––––––––––––––––––––––––––––––––––––––––––––– */
 void start();
@@ -79,13 +86,6 @@ std::pair<String, String> GenerateRandomColor();
 String PasswordToString(const int digits[4]);
 String PasswordToString(const std::array<int, 4> &digits);
 
-
-int passwordDigits[4] = {-1, -1, -1, -1}; // Array to hold the 4 digits of the password
-int currentDigitIndex = 0;                // Index to track which digit is being entered
-bool capturingPassword = false;
-int expectedColorDigit = -1;
-bool isAppLocked = true;
-
 using namespace std;
 
 
@@ -101,9 +101,7 @@ void setup() {
   // Init logging
   logging_init(g_sd);
 
-  // Init microphone
-
-  // Init IR stuff
+  // Init IR
   Serial.println(F("Enabling IRin"));
   IrReceiver.begin(IR_RECEIVE_PIN, ENABLE_LED_FEEDBACK);
   Serial.print(F("Ready to receive IR signals at pin "));
@@ -112,50 +110,25 @@ void setup() {
   // Init display
   display_init();
 
-  // Read code from lock_config.txt
-  read_code();
+  // Init mic / inference
+  mic_inference_init();
 
+  // Read code from file
+  read_code();
 }
 
-/*
-
-  Need to log every event: YY:MM:DD:HH:MM:SS,STAGE,RESULT,DETAIL
-  Log to unlock_log.txt
-  Display needs to be updated at every stage
-  Buzzer for successful/unsuccessful attempts
-
-*/
 void loop() {
   switch (g_current_stage) {
-    case START:
-      start();
-      break;
-    case WAITING_FOR_CODE:
-      waiting_for_code();
-      break;
-    case CODE_ENTERED :
-      check_code();
-      break;
-    case CODE_INCORRECT :
-      code_incorrect();
-      break;
-    case CODE_CORRECT :
-      code_correct();
-      break;
-    case WAITING_FOR_KEYWORD :
-      waiting_for_keyword();
-      break;
-    case KEYWORD_CORRECT :
-      keyword_correct();
-      break;
-    case KEYWORD_INCORRECT :
-      keyword_incorrect();
-      break;
-    case UNLOCKED :
-      unlocked();
-      break;
-    default :
-      break;
+    case START:              start();              break;
+    case WAITING_FOR_CODE:   waiting_for_code();   break;
+    case CODE_ENTERED:       check_code();         break;
+    case CODE_INCORRECT:     code_incorrect();     break;
+    case CODE_CORRECT:       code_correct();       break;
+    case WAITING_FOR_KEYWORD: waiting_for_keyword(); break;
+    case KEYWORD_CORRECT:    keyword_correct();    break;
+    case KEYWORD_INCORRECT:  keyword_incorrect();  break;
+    case UNLOCKED:           unlocked();           break;
+    default:                                       break;
   }
 }
 
@@ -168,29 +141,22 @@ void read_code() {
 }
 
 void start() {
-  // Display LOCK
   display_lock_screen();
   ResetPasswordCapture();
-  capturingPassword = true;
+  g_capturing_password = true;
   Serial.println(HasStoredPassword() ? "Enter stored password." : "Record a new password.");
-  
   g_current_stage = WAITING_FOR_CODE;
 }
 
 void waiting_for_code() {
-  if (!IrReceiver.decode()) {
-    return;
-  }
+  if (!IrReceiver.decode()) return;
 
   int decimalValue = HexToInt(IrReceiver.decodedIRData.command);
 
-  if (capturingPassword && decimalValue >= 0 && decimalValue <= 9) {
+  if (g_capturing_password && decimalValue >= 0 && decimalValue <= 9) {
     Serial.println("Capturing password...");
     CapturePassword(decimalValue);
-
-    if (IsPasswordComplete()) {
-      g_current_stage = CODE_ENTERED;
-    }
+    if (IsPasswordComplete()) g_current_stage = CODE_ENTERED;
   }
 
   Serial.println("Decoded: " + String(decimalValue));
@@ -198,19 +164,14 @@ void waiting_for_code() {
   IrReceiver.resume();
 }
 
-/**
- * Check for stored (correct) password in code file
- * Compare with input password
- * Move to CODE_CORRECT or CODE_INCORRECT
- */
 void check_code() {
   const bool hasStoredPassword = HasStoredPassword();
-  const String capturedPassword = PasswordToString(passwordDigits);
+  const String capturedPassword = PasswordToString(g_password_digits);
   Serial.println("Captured: " + capturedPassword);
 
   if (!hasStoredPassword) {
     SaveToSDCard("CODE: " + capturedPassword);
-    isAppLocked = false;
+    g_is_app_locked = false;
     ResetPasswordCapture();
     Serial.println("New password saved.");
     g_current_stage = UNLOCKED;
@@ -228,262 +189,181 @@ void check_code() {
 }
 
 void code_incorrect() {
-  isAppLocked = true;
+  g_is_app_locked = true;
   Serial.println("Password mismatch.");
-
   display_code_incorrect();
   delay(3000);
   display_lock_screen();
   ResetPasswordCapture();
-  capturingPassword = true;
+  g_capturing_password = true;
   Serial.println("Enter stored password.");
   g_current_stage = WAITING_FOR_CODE;
 }
 
 void code_correct() {
-
   display_code_correct();
   delay(3000);
 
-  //Has to change to listening model
   std::pair<String, String> generatedColor = GenerateRandomColor();
-  expectedColorDigit = generatedColor.first.toInt();
-  String message = generatedColor.second + ": (" + generatedColor.first + ")";
-  Serial.println("Password accepted. Enter digit for color: " + message);
-  //display_message(generatedColor.second + " : (" + generatedColor.first + ")");
-  display_say_color_screen(expectedColorDigit);
-  // Move to next stage
+  g_expected_color_digit = generatedColor.first.toInt();
+  Serial.println("Password accepted. Say color: " + generatedColor.second);
+  display_say_color_screen(g_expected_color_digit);
+
+  mic_inference_reset();
   g_current_stage = WAITING_FOR_KEYWORD;
 }
 
 void waiting_for_keyword() {
-  if (!IrReceiver.decode()) {
-    return;
-  }
+  String detected;
+  if (!mic_inference_run(detected)) return;
 
-  int decimalValue = HexToInt(IrReceiver.decodedIRData.command);
+  String expected = String(g_keyword_map.at(g_expected_color_digit).c_str());
+  Serial.println("Detected: " + detected + " | Expected: " + expected);
 
-  if (decimalValue >= 0 && decimalValue <= 9) {
-    if (decimalValue == expectedColorDigit) {
-      g_current_stage = KEYWORD_CORRECT;
-    } else {
-      g_current_stage = KEYWORD_INCORRECT;
-    }
+  if (detected == expected) {
+    g_current_stage = KEYWORD_CORRECT;
   } else {
-    Serial.println("Waiting for color response digit.");
+    g_current_stage = KEYWORD_INCORRECT;
   }
-
-  Serial.println("Decoded: " + String(decimalValue));
-  delay(100);
-  IrReceiver.resume();
 }
 
 void keyword_incorrect() {
-  isAppLocked = true;
-  expectedColorDigit = -1;
+  g_is_app_locked = true;
+  g_expected_color_digit = -1;
   Serial.println("Color mismatch. App remains locked.");
   display_lock_screen();
   ResetPasswordCapture();
-  capturingPassword = true;
+  g_capturing_password = true;
   Serial.println("Enter stored password.");
   g_current_stage = WAITING_FOR_CODE;
 }
 
 void keyword_correct() {
-  // Unlock
-  isAppLocked = false;
-  expectedColorDigit = -1;
+  g_is_app_locked = false;
+  g_expected_color_digit = -1;
   Serial.println("Color accepted. App unlocked.");
   g_current_stage = UNLOCKED;
 }
 
 void unlocked() {
   display_unlock_screen();
-  // App remains unlocked until reset
 }
 
 int HexToInt(uint8_t hexCode)
 {
-    auto it = remoteDigits.find(hexCode);
-    return (it != remoteDigits.end()) ? it->second : hexCode;
+    auto it = g_remote_digits.find(hexCode);
+    return (it != g_remote_digits.end()) ? it->second : hexCode;
 }
 
 void CapturePassword(int currDigit)
 {
-    if (currDigit < 0 || currDigit > 9)
-    {
-        return;
-    }
+    if (currDigit < 0 || currDigit > 9) return;
 
-    if (currentDigitIndex < 4)
-    {
-        passwordDigits[currentDigitIndex] = currDigit;
-        currentDigitIndex++;
-        
-        //Convert Digits to "*" for display
+    if (g_current_digit_index < 4) {
+        g_password_digits[g_current_digit_index] = currDigit;
+        g_current_digit_index++;
+
         String displayPassword = "";
-        for (int i = 0; i < currentDigitIndex; i++)
-        {
+        for (int i = 0; i < g_current_digit_index; i++) {
             displayPassword += "*";
-            display_capturing_password(currentDigitIndex);
-
+            display_capturing_password(g_current_digit_index);
         }
         Serial.println("Captured digit: " + String(currDigit) + " | Display: " + displayPassword);
     }
 }
 
-
 bool does_code_file_exist()
 {
-    if (!g_sd_available)
-    {
+    if (!g_sd_available) {
         Serial.println("SD card not available; cannot check for file.");
         return false;
     }
     return g_sd.exists(CODE_FILENAME);
 }
 
-/**
- * Read code file, stripping CODE: prefix
- * 
- * @return std::array<int, 4> containing 4 password digits
- */
 std::array<int, 4> get_file_password()
 {
     std::array<int, 4> password = {-1, -1, -1, -1};
-    if (!g_sd_available)
-    {
+    if (!g_sd_available) {
         Serial.println("SD card not available; cannot read file.");
         return password;
     }
 
     FsFile file = g_sd.open(CODE_FILENAME, FILE_READ);
-    if (file)
-    {
+    if (file) {
         String line = file.readStringUntil('\n');
         file.close();
         int codeIndex = line.indexOf("CODE: ");
-        if (codeIndex != -1)
-        {
-            String codeStr = line.substring(codeIndex + 6); // Get the part after "CODE: "
-            if (codeStr.length() >= 4)
-            {
+        if (codeIndex != -1) {
+            String codeStr = line.substring(codeIndex + 6);
+            if (codeStr.length() >= 4) {
                 for (int i = 0; i < 4; i++)
-                {
-                    password[i] = codeStr.charAt(i) - '0'; // Convert char to int
-                }
+                    password[i] = codeStr.charAt(i) - '0';
             }
         }
-    }
-    else
-    {
+    } else {
         Serial.println("Error opening file on SD card.");
     }
     return password;
 }
 
-/**
- * Check if code file exists
- * Read code file for password
- */
 bool HasStoredPassword()
 {
-    if (!does_code_file_exist())
-    {
-        return false;
-    }
-
+    if (!does_code_file_exist()) return false;
     const auto password = get_file_password();
     for (int digit : password)
-    {
-        if (digit < 0 || digit > 9)
-        {
-            return false;
-        }
-    }
-
+        if (digit < 0 || digit > 9) return false;
     return true;
 }
 
 void SaveToSDCard(const String &data)
 {
-    if (!g_sd_available)
-    {
+    if (!g_sd_available) {
         Serial.println("SD card not available; skipping password write.");
         return;
     }
-
     DeleteCodeFile();
-
     FsFile file = g_sd.open(CODE_FILENAME, FILE_WRITE);
-    if (file)
-    {
+    if (file) {
         file.println(data);
         file.close();
         Serial.println("Data saved to SD card.");
-    }
-    else
-    {
+    } else {
         Serial.println("Error opening file on SD card.");
     }
 }
 
 void DeleteCodeFile()
 {
-    if (!g_sd_available)
-    {
-        return;
-    }
-
+    if (!g_sd_available) return;
     if (g_sd.exists(CODE_FILENAME) && g_sd.remove(CODE_FILENAME))
-    {
         Serial.println("Code file cleared.");
-    }
     else
-    {
         Serial.println("No code file to clear or failed to remove it.");
-    }
 }
 
 bool IsPasswordComplete()
 {
-    for (int digit : passwordDigits)
-    {
-        if (digit == -1)
-        {
-            return false;
-        }
-    }
-
+    for (int digit : g_password_digits)
+        if (digit == -1) return false;
     return true;
 }
 
 bool PasswordsMatch(const std::array<int, 4> &storedPassword)
 {
     for (int i = 0; i < 4; i++)
-    {
-        if (passwordDigits[i] != storedPassword[i])
-        {
-            return false;
-        }
-    }
-
+        if (g_password_digits[i] != storedPassword[i]) return false;
     return true;
 }
 
 void ResetPasswordCapture()
 {
-    capturingPassword = false;
-    currentDigitIndex = 0;
+    g_capturing_password = false;
+    g_current_digit_index = 0;
     for (int i = 0; i < 4; i++)
-    {
-        passwordDigits[i] = -1;
-    }
+        g_password_digits[i] = -1;
 }
 
-/**
- * Return pair of <String,String> representing <Index, Color>
- */
 std::pair<String, String> GenerateRandomColor()
 {
     int randomColorIndex = random(1, 8);
