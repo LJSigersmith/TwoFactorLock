@@ -43,7 +43,7 @@ static void capture_samples(void* arg) {
     Serial.println("DBG: capture task started");
     while (s_record_status) {
         esp_err_t ret = i2s_channel_read(s_rx_chan, (void*)s_sample_buf, bytes_to_read, &bytes_read, portMAX_DELAY);
-        Serial.println("DBG: i2s_read ret=" + String(ret) + " bytes=" + String(bytes_read));
+        //Serial.println("DBG: i2s_read ret=" + String(ret) + " bytes=" + String(bytes_read));
         if (ret == ESP_OK && bytes_read > 0) {
             for (int x = 0; x < (int)(bytes_read / 2); x++)
                 s_sample_buf[x] = (int16_t)(s_sample_buf[x]) * 8;
