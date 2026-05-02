@@ -219,11 +219,9 @@ void waiting_for_keyword() {
 
   String expected = String(g_keyword_map.at(g_expected_color_digit).c_str());
   Serial.println("Detected: " + detected + " | Expected: " + expected);
-
-  if (detected == expected) {
+  if (expected == detected) {
+    Serial.println("Keyword correct");
     g_current_stage = KEYWORD_CORRECT;
-  } else {
-    g_current_stage = KEYWORD_INCORRECT;
   }
 }
 
